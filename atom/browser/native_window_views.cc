@@ -858,8 +858,8 @@ void NativeWindowViews::SetMenu(AtomMenuModel* menu_model) {
 #endif
 
   // Do not show menu bar in frameless window.
-  if (!has_frame())
-    return;
+  //if (!has_frame())
+  //  return;
 
   if (!menu_bar_) {
     gfx::Size content_size = GetContentSize();

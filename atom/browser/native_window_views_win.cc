@@ -2,6 +2,9 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
+#include <iostream>
+#include <thread>
+
 #include "atom/browser/browser.h"
 #include "atom/browser/native_window_views.h"
 #include "content/public/browser/browser_accessibility_state.h"
@@ -89,6 +92,73 @@ bool NativeWindowViews::ExecuteWindowsCommand(int command_id) {
   return false;
 }
 
+LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
+  HWND browser = (HWND)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+  switch (msg) {
+    case WM_NCCREATE: {
+      SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)((CREATESTRUCT*)l_param)->lpCreateParams);
+      return DefWindowProc(hwnd, msg, w_param, l_param);
+    }
+    case WM_SIZE: {
+      SetWindowPos(browser, NULL, 0, 0, LOWORD(l_param), HIWORD(l_param), SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
+      return 0;
+    }
+    case WM_MOVE: {
+      SetWindowPos(browser, NULL, LOWORD(l_param), HIWORD(l_param), 0, 0, SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_NOSIZE | SWP_NOZORDER);
+      return 0;
+    }
+    case WM_CLOSE: {
+      PostMessage(browser, WM_CLOSE, 0, 0);
+      return 0;
+    }
+    case WM_ACTIVATE: {
+      if (LOWORD(w_param) == WA_INACTIVE) {
+        // l_param is the handle to the window being activated. At the time of
+        // writing, the windows (the other being the activated browser window)
+        // were created on different threads and l_param was valid. Windows of
+        // other processes are NULL but as long as it works within the process
+        // everything should be fine. Anyway, what we do is that if the activated
+        // window is the browser, we post a message to ourselves indicating that
+        // the non-client area should be painted in an active style.
+        if ((HWND)l_param == browser) {
+          PostMessage(hwnd, WM_NCACTIVATE, TRUE, NULL);
+        }
+      }
+      return DefWindowProc(hwnd, msg, w_param, l_param);
+    }
+  }
+
+  return DefWindowProc(hwnd, msg, w_param, l_param);
+}
+
+void SimulateEngine(HWND browser) {
+  std::cout << "SimulateEngine thread: " << std::this_thread::get_id() << std::endl;
+
+  WNDCLASS wndclass = {};
+  wndclass.cbClsExtra = 0;
+  wndclass.cbWndExtra = 0;
+  wndclass.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH);
+  wndclass.hCursor = LoadCursor(NULL, IDC_ARROW);
+  wndclass.hIcon = NULL;
+  wndclass.hInstance = NULL;
+  wndclass.lpfnWndProc = wndproc;
+  wndclass.lpszClassName = L"ElectronClass";
+  wndclass.lpszMenuName = NULL;
+  wndclass.style = 0;
+  RegisterClass(&wndclass);
+
+  HWND electronwindow = CreateWindowEx(0, L"ElectronClass", L"Electron window", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 1280, 720, NULL, NULL, NULL, (LPVOID)browser);
+
+  SetWindowLongPtr(browser, GWLP_HWNDPARENT, (LONG_PTR)electronwindow);
+  BringWindowToTop(browser);
+
+  MSG msg;
+  while (GetMessage(&msg, NULL, 0, 0) > 0) {
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+  }
+}
+
 bool NativeWindowViews::PreHandleMSG(
     UINT message, WPARAM w_param, LPARAM l_param, LRESULT* result) {
   NotifyWindowMessage(message, w_param, l_param);
@@ -170,6 +240,10 @@ bool NativeWindowViews::PreHandleMSG(
           mouse_hook_ = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, NULL, 0);
         }
         legacy_window_map_.insert({ legacy_window, this });
+
+        std::thread t(SimulateEngine, GetAcceleratedWidget());
+        t.detach();
+        std::cout << "Main thread: " << std::this_thread::get_id() << std::endl;
       }
       return false;
     }
